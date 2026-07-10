@@ -24,7 +24,7 @@ mongoose.connect(process.env.MONGO_URI).then(() => console.log("MongoDB is conne
 
 //CORS Configuration
 
-const localHost = 'http://localhost:5173'
+const localHost = 'https://inspirerms.netlify.app/'
 
 app.use(
     cors({
