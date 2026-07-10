@@ -5,6 +5,10 @@ const cookieParser = require("cookie-parser");
 const dotenv = require("dotenv");
 
 const { User } = require("./models/index");
+const authRoutes = require("./routes/auth-routes");
+const publicRoutes = require("./routes/public-routes");
+const schoolRoutes = require("./routes/school-routes");
+const schoolManageRoutes = require("./routes/school-manage-routes");
 
 
 dotenv.config();
@@ -18,14 +22,17 @@ const app = express();
 mongoose.connect(process.env.MONGO_URI).then(() => console.log("MongoDB is connected")).catch((error) => console.log(error));
 
 
+//CORS Configuration
+
+const localHost = 'http://localhost:5173'
 
 app.use(
     cors({
-        origin: '',
+        origin: localHost,
         methods: ['GET', 'POST', 'DELETE', 'PUT'],
         allowedHeaders: [
             'Content-Type',
-            'Authorisation',
+            'Authorization',
             'Cache-Control',
             'Expires',
             'Pragma'
@@ -36,6 +43,11 @@ app.use(
 
 app.use(cookieParser());
 app.use(express.json());
+
+app.use('/api/superadmin', authRoutes);
+app.use('/api', publicRoutes);
+app.use('/api/school', schoolRoutes);
+app.use('/api/school/manage', schoolManageRoutes);
 
 
 app.listen(PORT, console.log(
