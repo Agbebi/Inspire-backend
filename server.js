@@ -19,12 +19,16 @@ const app = express();
 
 // MongoDB Connection
 
-mongoose.connect(process.env.MONGO_URI).then(() => console.log("MongoDB is connected")).catch((error) => console.log(error));
+const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/result-management';
+
+mongoose.connect(mongoURI).then(() => console.log("MongoDB is connected")).catch((error) => console.log(error));
 
 
 //CORS Configuration
 
 const localHost = 'https://inspirerms.netlify.app'
+
+// const localHost = 'http://localhost:5173'
 
 app.use(
     cors({
