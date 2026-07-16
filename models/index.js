@@ -30,6 +30,21 @@ const schoolSchema = new mongoose.Schema({
             remark: String
         },
     ],
+    caConfig: {
+        caCount: {
+            type: Number,
+            enum: [2, 3],
+            default: 3,
+        },
+        caMaxScores: {
+            type: [Number],
+            default: [10, 10, 20],
+        },
+        examMaxScore: {
+            type: Number,
+            default: 70,
+        },
+    },
     createdAt: {
         type: Date,
         default: Date.now()
@@ -72,11 +87,31 @@ const academicCycleSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'School',
     },
-    session: String,
-    term: String,
+    session: {
+        type: String,
+        required: true,
+    },
+    term: {
+        type: String,
+        required: true,
+    },
     startDate: Date,
     endDate: Date,
-    isCurrent: Boolean
+    isCurrent: {
+        type: Boolean,
+        default: false,
+    },
+    isPublished: {
+        type: Boolean,
+        default: false,
+    },
+    publishedAt: {
+        type: Date,
+    },
+    resultsLocked: {
+        type: Boolean,
+        default: false,
+    },
 })
 
 const classSchema = new mongoose.Schema({
@@ -114,13 +149,33 @@ const studentSchema = new mongoose.Schema({
         ref: 'Class',
     },
     admissionNumber: {
-        type: String,  //E.g SCH/2026/001
+        type: String,
         required: true
     },
     status: {
         type: String,
         enum: ['active', 'graduated', 'left']
-    }
+    },
+    promotionHistory: [
+        {
+            fromClassId: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'Class'
+            },
+            toClassId: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'Class'
+            },
+            cycleId: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'AcademicCycle'
+            },
+            date: {
+                type: Date,
+                default: Date.now
+            }
+        }
+    ]
 })
 
 
@@ -161,6 +216,7 @@ const scoreSchema = new mongoose.Schema({
     },
     ca1: Number,
     ca2: Number,
+    ca3: Number,
     exam: Number,
     total: Number,
     grade: String,

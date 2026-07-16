@@ -15,6 +15,8 @@ const addSChool = async (req, res) => {
             adminName,
             adminEmail,
             adminPassword,
+            session,
+            term,
         } = req.body;
 
         if (!name || !supportEmail || !adminName || !adminEmail || !adminPassword) {
@@ -116,6 +118,16 @@ const addSChool = async (req, res) => {
 
         await admin.save();
 
+        if (session && term) {
+            const cycle = new AcademicCycle({
+                schoolId: school._id,
+                session,
+                term,
+                isCurrent: true,
+            })
+            await cycle.save();
+        }
+
         return res.status(200).json({
             success: true,
             data: school,
@@ -151,18 +163,30 @@ const getSChoolInformations = async (req, res) => {
                 })
             }
 
+            const studentCount = await Student.countDocuments({ schoolId: id })
+
             return res.status(200).json({
                 success: true,
-                data: school,
+                data: { ...school.toObject(), studentCount },
                 message: 'School fetched successfully'
             })
         }
 
         const schools = await School.find().sort({ createdAt: -1 })
+        const schoolIds = schools.map(s => s._id)
+        const studentCounts = await Student.aggregate([
+            { $match: { schoolId: { $in: schoolIds } } },
+            { $group: { _id: "$schoolId", count: { $sum: 1 } } }
+        ])
+        const countMap = new Map(studentCounts.map(c => [String(c._id), c.count]))
+        const schoolsWithCount = schools.map(s => ({
+            ...s.toObject(),
+            studentCount: countMap.get(String(s._id)) || 0
+        }))
 
         return res.status(200).json({
             success: true,
-            data: schools,
+            data: schoolsWithCount,
             message: 'Schools fetched successfully'
         })
 
@@ -189,7 +213,7 @@ const editSchoolInformations = async (req, res) => {
             })
         }
 
-        const { name, logoUrl, address, supportEmail, subscriptionStatus, gradingScale } = req.body;
+        const { name, logoUrl, address, supportEmail, subscriptionStatus, gradingScale, session, term } = req.body;
 
         const school = await School.findById(id)
 
@@ -222,6 +246,20 @@ const editSchoolInformations = async (req, res) => {
             },
             { new: true }
         )
+
+        if (session && term) {
+            const existingCycle = await AcademicCycle.findOne({ schoolId: id, session, term })
+            if (!existingCycle) {
+                const hasCurrent = await AcademicCycle.findOne({ schoolId: id, isCurrent: true })
+                const cycle = new AcademicCycle({
+                    schoolId: id,
+                    session,
+                    term,
+                    isCurrent: !hasCurrent,
+                })
+                await cycle.save()
+            }
+        }
 
         return res.status(200).json({
             success: true,
@@ -307,5 +345,42 @@ const searchSchools = async (req, res) => {
     }
 }
 
-module.exports = { addSChool, removeSChool, getSChoolInformations, editSchoolInformations, searchSchools }
+const toggleCycleResultsLock = async (req, res) => {
+    try {
+        const { id } = req.params
+        if (!id) {
+            return res.status(400).json({ success: false, message: 'Cycle ID is required' })
+        }
+        const cycle = await AcademicCycle.findById(id)
+        if (!cycle) {
+            return res.status(404).json({ success: false, message: 'Academic cycle not found' })
+        }
+        cycle.resultsLocked = !cycle.resultsLocked
+        await cycle.save()
+        return res.status(200).json({
+            success: true,
+            data: cycle,
+            message: cycle.resultsLocked ? 'Cycle locked successfully' : 'Cycle unlocked successfully'
+        })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ success: false, message: 'There was an error!' })
+    }
+}
+
+const getSchoolCycles = async (req, res) => {
+    try {
+        const { schoolId } = req.params
+        if (!schoolId) {
+            return res.status(400).json({ success: false, message: 'School ID is required' })
+        }
+        const cycles = await AcademicCycle.find({ schoolId }).sort({ session: -1, term: 1 }).select('_id session term isPublished isCurrent resultsLocked')
+        return res.status(200).json({ success: true, data: cycles, message: 'School cycles fetched successfully' })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ success: false, message: 'There was an error!' })
+    }
+}
+
+module.exports = { addSChool, removeSChool, getSChoolInformations, editSchoolInformations, searchSchools, toggleCycleResultsLock, getSchoolCycles }
 

@@ -9,6 +9,7 @@ const authRoutes = require("./routes/auth-routes");
 const publicRoutes = require("./routes/public-routes");
 const schoolRoutes = require("./routes/school-routes");
 const schoolManageRoutes = require("./routes/school-manage-routes");
+const schoolCycleRoutes = require("./routes/school-cycle-routes");
 
 
 dotenv.config();
@@ -19,7 +20,7 @@ const app = express();
 
 // MongoDB Connection
 
-const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/result-management';
+const mongoURI = process.env.MONGO_URI || 'mongodb+srv://@cluster0.duchdbl.mongodb.net/?retryWrites=true&w=majority';
 
 mongoose.connect(mongoURI).then(() => console.log("MongoDB is connected")).catch((error) => console.log(error));
 
@@ -52,6 +53,7 @@ app.use('/api/superadmin', authRoutes);
 app.use('/api', publicRoutes);
 app.use('/api/school', schoolRoutes);
 app.use('/api/school/manage', schoolManageRoutes);
+app.use('/api/school/manage', schoolCycleRoutes);
 
 
 app.listen(PORT, console.log(

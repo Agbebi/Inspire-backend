@@ -32,7 +32,15 @@ const {
     deleteResult,
     getMissingResults,
     getDashboardStats,
+    promoteStudents,
+    getClassPerformance,
 } = require('../controllers/school/manage')
+const {
+    getCyclesSummary,
+    getClassBroadsheet,
+    getCumulativeAverages,
+    getPerformanceAnalytics,
+} = require('../controllers/school/analytics')
 
 router.use(protectSchool)
 
@@ -62,12 +70,19 @@ router.delete('/teachers/me/results/:id', deleteResult)
 router.get('/results/missing', getMissingResults)
 router.get('/dashboard/stats', getDashboardStats)
 
+router.get('/analytics/cycles', getCyclesSummary)
+router.get('/analytics/broadsheet', getClassBroadsheet)
+router.get('/analytics/cumulative', getCumulativeAverages)
+router.get('/analytics/performance', getPerformanceAnalytics)
+
 router.get('/students', getStudents)
 router.post('/students', addStudent)
 router.get('/students/:id', getStudent)
 router.put('/students/:id', updateStudent)
 router.get('/students/:id/results', getStudentResults)
 router.delete('/students/:id', deleteStudent)
+router.post('/students/promote', promoteStudents)
+router.get('/classes/:classId/performance', getClassPerformance)
 
 router.get('/results', getResults)
 

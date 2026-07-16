@@ -1,5 +1,5 @@
 const bcrypt = require('bcryptjs')
-const { School, User, Class, Student, Subject, Score } = require('../../models')
+const { School, User, AcademicCycle, Class, Student, Subject, Score } = require('../../models')
 
 const getSubjects = async (req, res) => {
     try {
@@ -361,10 +361,14 @@ const getStudent = async (req, res) => {
 const getStudentResults = async (req, res) => {
     try {
         const { id } = req.params
-        const scores = await Score.find({ schoolId: req.user.schoolId, studentId: id })
+        const { cycleId } = req.query
+        const filter = { schoolId: req.user.schoolId, studentId: id }
+        if (cycleId) filter.cycleId = cycleId
+        const scores = await Score.find(filter)
             .populate('subjectId', 'name code')
             .populate('classsId', 'name arm')
             .populate('teacherId', 'name')
+            .populate('cycleId', 'session term isPublished')
             .sort({ createdAt: -1 })
         return res.status(200).json({ success: true, data: scores, message: 'Results fetched successfully' })
     } catch (error) {
@@ -391,10 +395,15 @@ const getDashboardStats = async (req, res) => {
 
 const getMissingResults = async (req, res) => {
     try {
+        const { cycleId } = req.query
         const classes = await Class.find({ schoolId: req.user.schoolId }).sort({ name: 1 })
         const teachers = await User.find({ schoolId: req.user.schoolId, role: 'teacher' }).select('assignedSubjects')
         const students = await Student.find({ schoolId: req.user.schoolId }).populate('currentClassId', 'name arm')
-        const scores = await Score.find({ schoolId: req.user.schoolId }).select('studentId classsId subjectId')
+        
+        const scoreFilter = { schoolId: req.user.schoolId }
+        if (cycleId) scoreFilter.cycleId = cycleId
+        const scores = await Score.find(scoreFilter).select('studentId classsId subjectId')
+        
         const allSubjectIds = new Set()
         teachers.forEach((t) => {
             (t.assignedSubjects || []).forEach((a) => {
@@ -463,18 +472,109 @@ const deleteStudent = async (req, res) => {
     }
 }
 
+const promoteStudents = async (req, res) => {
+    try {
+        const { fromClassId, toClassId, studentIds, cycleId, mode } = req.body
+        const schoolId = req.user.schoolId
+
+        if (!fromClassId || !Array.isArray(studentIds) || studentIds.length === 0) {
+            return res.status(400).json({ success: false, message: 'Source class and at least one student are required' })
+        }
+
+        const isGraduation = mode === 'graduate'
+        const isLeft = mode === 'left'
+
+        if (!isGraduation && !isLeft && !toClassId) {
+            return res.status(400).json({ success: false, message: 'Destination class is required for promotion' })
+        }
+
+        if (!isGraduation && !isLeft && String(fromClassId) === String(toClassId)) {
+            return res.status(400).json({ success: false, message: 'Source and destination classes cannot be the same' })
+        }
+
+        const fromClass = await Class.findOne({ _id: fromClassId, schoolId })
+        if (!fromClass) {
+            return res.status(404).json({ success: false, message: 'Source class not found' })
+        }
+
+        let cycle = null
+        if (cycleId) {
+            cycle = await AcademicCycle.findOne({ _id: cycleId, schoolId })
+        }
+
+        const students = await Student.find({ _id: { $in: studentIds }, schoolId, currentClassId: fromClassId })
+        const foundIds = new Set(students.map((s) => String(s._id)))
+        const invalidIds = studentIds.filter((id) => !foundIds.has(String(id)))
+
+        if (students.length === 0) {
+            return res.status(404).json({ success: false, message: 'No valid students found in the selected source class' })
+        }
+
+        const updatePromises = students.map((student) => {
+            const update = {
+                $set: {},
+                $push: {
+                    promotionHistory: {
+                        fromClassId: fromClassId,
+                        toClassId: isGraduation || isLeft ? null : toClassId,
+                        cycleId: cycleId || undefined,
+                        date: new Date()
+                    }
+                }
+            }
+
+            if (isGraduation) {
+                update.$set.status = 'graduated'
+                update.$set.currentClassId = null
+            } else if (isLeft) {
+                update.$set.status = 'left'
+                update.$set.currentClassId = null
+            } else {
+                update.$set.currentClassId = toClassId
+            }
+
+            return Student.findOneAndUpdate(
+                { _id: student._id, schoolId },
+                update,
+                { new: true }
+            )
+        })
+
+        const updatedStudents = await Promise.all(updatePromises)
+
+        const message = isGraduation
+            ? `${updatedStudents.length} student(s) graduated successfully${invalidIds.length > 0 ? `, ${invalidIds.length} skipped` : ''}`
+            : isLeft
+                ? `${updatedStudents.length} student(s) marked as left successfully${invalidIds.length > 0 ? `, ${invalidIds.length} skipped` : ''}`
+                : `${updatedStudents.length} student(s) promoted successfully${invalidIds.length > 0 ? `, ${invalidIds.length} skipped` : ''}`
+
+        return res.status(200).json({
+            success: true,
+            data: updatedStudents,
+            promotedCount: updatedStudents.length,
+            skippedCount: invalidIds.length,
+            message
+        })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ success: false, message: 'There was an error!' })
+    }
+}
+
 const getResults = async (req, res) => {
     try {
-        const { classId, studentId } = req.query
+        const { classId, studentId, cycleId } = req.query
         const filter = { schoolId: req.user.schoolId }
         if (classId) filter.classsId = classId
         if (studentId) filter.studentId = studentId
+        if (cycleId) filter.cycleId = cycleId
         const scores = await Score.find(filter)
             .populate('studentId', 'firstName lastName admissionNumber')
             .populate('subjectId', 'name code')
             .populate('classsId', 'name')
+            .populate('cycleId', 'session term isPublished')
             .sort({ createdAt: -1 })
-            .limit(200)
+            .limit(500)
         return res.status(200).json({ success: true, data: scores, message: 'Results fetched successfully' })
     } catch (error) {
         console.log(error)
@@ -527,12 +627,18 @@ const getTeacherClasses = async (req, res) => {
 
 const getTeacherResults = async (req, res) => {
     try {
-        const scores = await Score.find({ schoolId: req.user.schoolId, teacherId: req.user._id })
+        const { cycleId } = req.query
+        if (!cycleId) {
+            return res.status(400).json({ success: false, message: 'Academic cycle is required to view results' })
+        }
+        const filter = { schoolId: req.user.schoolId, teacherId: req.user._id, cycleId }
+        const scores = await Score.find(filter)
             .populate('studentId', 'firstName lastName admissionNumber')
             .populate('subjectId', 'name code')
             .populate('classsId', 'name arm')
+            .populate('cycleId', 'session term isPublished')
             .sort({ createdAt: -1 })
-            .limit(200)
+            .limit(500)
         return res.status(200).json({ success: true, data: scores, message: 'Teacher results fetched successfully' })
     } catch (error) {
         console.log(error)
@@ -567,23 +673,56 @@ const getTeacherClassStudents = async (req, res) => {
 const updateResult = async (req, res) => {
     try {
         const { id } = req.params
-        const { ca1, ca2, exam } = req.body
+        const { ca1, ca2, ca3, exam } = req.body
 
         const score = await Score.findOne({ _id: id, schoolId: req.user.schoolId, teacherId: req.user._id })
         if (!score) {
             return res.status(404).json({ success: false, message: 'Result not found or not authorized' })
         }
 
+        if (score.isLocked) {
+            return res.status(403).json({ success: false, message: 'This result is locked and cannot be edited' })
+        }
+
+        const cycle = await AcademicCycle.findOne({ _id: score.cycleId, schoolId: req.user.schoolId })
+        if (!cycle) {
+            return res.status(404).json({ success: false, message: 'Academic cycle not found' })
+        }
+
+        if (cycle.isPublished) {
+            return res.status(403).json({ success: false, message: 'This cycle is published and results cannot be edited' })
+        }
+
         const numCa1 = ca1 !== undefined ? Number(ca1) : score.ca1
         const numCa2 = ca2 !== undefined ? Number(ca2) : score.ca2
+        const numCa3 = ca3 !== undefined ? Number(ca3) : score.ca3
         const numExam = exam !== undefined ? Number(exam) : score.exam
+
+        const school = await School.findById(req.user.schoolId).select('gradingScale caConfig')
+        const caConfig = school?.caConfig || { caCount: 3, caMaxScores: [10, 10, 20], examMaxScore: 70 }
+        const caCount = caConfig.caCount || 3
+        const caMaxScores = caConfig.caMaxScores || [10, 10, 20]
+        const examMaxScore = caConfig.examMaxScore || 70
+
+        if (numCa1 < 0 || numCa1 > (caMaxScores[0] || 10)) {
+            return res.status(400).json({ success: false, message: `CA1 must be between 0 and ${caMaxScores[0] || 10}` })
+        }
+        if (numCa2 < 0 || numCa2 > (caMaxScores[1] || 10)) {
+            return res.status(400).json({ success: false, message: `CA2 must be between 0 and ${caMaxScores[1] || 10}` })
+        }
+        if (caCount === 3 && (numCa3 < 0 || numCa3 > (caMaxScores[2] || 20))) {
+            return res.status(400).json({ success: false, message: `CA3 must be between 0 and ${caMaxScores[2] || 20}` })
+        }
+        if (numExam < 0 || numExam > examMaxScore) {
+            return res.status(400).json({ success: false, message: `Exam must be between 0 and ${examMaxScore}` })
+        }
 
         score.ca1 = numCa1
         score.ca2 = numCa2
+        score.ca3 = numCa3
         score.exam = numExam
-        score.total = numCa1 + numCa2 + numExam
+        score.total = numCa1 + numCa2 + numExam + numCa3
 
-        const school = await School.findById(req.user.schoolId).select('gradingScale')
         if (school?.gradingScale && school.gradingScale.length > 0) {
             const match = school.gradingScale.find((g) => score.total >= g.minScore && score.total <= g.maxScore)
             if (match) {
@@ -602,7 +741,20 @@ const updateResult = async (req, res) => {
 
 const addResult = async (req, res) => {
     try {
-        const { studentId, classsId, subjectId, ca1, ca2, exam, total, grade, remark } = req.body
+        const { studentId, classsId, subjectId, cycleId, ca1, ca2, ca3, exam, total, grade, remark } = req.body
+
+        if (!cycleId) {
+            return res.status(400).json({ success: false, message: 'Academic cycle is required' })
+        }
+
+        const cycle = await AcademicCycle.findOne({ _id: cycleId, schoolId: req.user.schoolId })
+        if (!cycle) {
+            return res.status(404).json({ success: false, message: 'Academic cycle not found' })
+        }
+
+        if (cycle.isPublished) {
+            return res.status(403).json({ success: false, message: 'This cycle is published and new results cannot be added' })
+        }
 
         const teacher = await User.findOne({ _id: req.user._id, schoolId: req.user.schoolId, role: 'teacher' })
             .select('assignedSubjects')
@@ -615,17 +767,36 @@ const addResult = async (req, res) => {
             return res.status(403).json({ success: false, message: 'You are not authorized to add results for this class and subject' })
         }
 
-        const existing = await Score.findOne({ schoolId: req.user.schoolId, studentId, classsId, subjectId })
+        const existing = await Score.findOne({ schoolId: req.user.schoolId, studentId, classsId, subjectId, cycleId })
         if (existing) {
-            return res.status(409).json({ success: false, message: 'A result already exists for this student in this class and subject' })
+            return res.status(409).json({ success: false, message: 'A result already exists for this student in this class, subject and term' })
         }
 
         const numCa1 = ca1 === undefined || ca1 === null || ca1 === "" ? 0 : Number(ca1)
         const numCa2 = ca2 === undefined || ca2 === null || ca2 === "" ? 0 : Number(ca2)
+        const numCa3 = ca3 === undefined || ca3 === null || ca3 === "" ? 0 : Number(ca3)
         const numExam = exam === undefined || exam === null || exam === "" ? 0 : Number(exam)
-        const calculatedTotal = numCa1 + numCa2 + numExam
 
-        const school = await School.findById(req.user.schoolId).select('gradingScale')
+        const school = await School.findById(req.user.schoolId).select('gradingScale caConfig')
+        const caConfig = school?.caConfig || { caCount: 3, caMaxScores: [10, 10, 20], examMaxScore: 70 }
+        const caCount = caConfig.caCount || 3
+        const caMaxScores = caConfig.caMaxScores || [10, 10, 20]
+        const examMaxScore = caConfig.examMaxScore || 70
+
+        if (numCa1 < 0 || numCa1 > (caMaxScores[0] || 10)) {
+            return res.status(400).json({ success: false, message: `CA1 must be between 0 and ${caMaxScores[0] || 10}` })
+        }
+        if (numCa2 < 0 || numCa2 > (caMaxScores[1] || 10)) {
+            return res.status(400).json({ success: false, message: `CA2 must be between 0 and ${caMaxScores[1] || 10}` })
+        }
+        if (caCount === 3 && (numCa3 < 0 || numCa3 > (caMaxScores[2] || 20))) {
+            return res.status(400).json({ success: false, message: `CA3 must be between 0 and ${caMaxScores[2] || 20}` })
+        }
+        if (numExam < 0 || numExam > examMaxScore) {
+            return res.status(400).json({ success: false, message: `Exam must be between 0 and ${examMaxScore}` })
+        }
+
+        const calculatedTotal = numCa1 + numCa2 + numExam + numCa3
         let calculatedGrade = grade || null
         let calculatedRemark = remark || null
         if (school?.gradingScale && school.gradingScale.length > 0) {
@@ -641,9 +812,11 @@ const addResult = async (req, res) => {
             studentId,
             classsId,
             subjectId,
+            cycleId,
             teacherId: req.user._id,
             ca1: numCa1,
             ca2: numCa2,
+            ca3: numCa3,
             exam: numExam,
             total: calculatedTotal,
             grade: calculatedGrade,
@@ -664,6 +837,16 @@ const deleteResult = async (req, res) => {
         if (!score) {
             return res.status(404).json({ success: false, message: 'Result not found or not authorized' })
         }
+
+        if (score.isLocked) {
+            return res.status(403).json({ success: false, message: 'This result is locked and cannot be deleted' })
+        }
+
+        const cycle = await AcademicCycle.findOne({ _id: score.cycleId, schoolId: req.user.schoolId })
+        if (cycle?.isPublished) {
+            return res.status(403).json({ success: false, message: 'This cycle is published and results cannot be deleted' })
+        }
+
         await Score.findByIdAndDelete(id)
         return res.status(200).json({ success: true, message: 'Result deleted successfully' })
     } catch (error) {
@@ -687,19 +870,96 @@ const getSchoolSettings = async (req, res) => {
 
 const updateSchoolSettings = async (req, res) => {
     try {
-        const { name, address, logoUrl, supportEmail, motto } = req.body
-        const school = await School.findByIdAndUpdate(
-            req.user.schoolId,
-            {
-                ...(name !== undefined && { name }),
-                ...(address !== undefined && { address }),
-                ...(logoUrl !== undefined && { logoUrl }),
-                ...(supportEmail !== undefined && { supportEmail }),
-                ...(motto !== undefined && { motto }),
-            },
-            { new: true }
-        )
+        const { name, address, logoUrl, supportEmail, motto, caConfig } = req.body
+        const updatePayload = {}
+        if (name !== undefined) updatePayload.name = name
+        if (address !== undefined) updatePayload.address = address
+        if (logoUrl !== undefined) updatePayload.logoUrl = logoUrl
+        if (supportEmail !== undefined) updatePayload.supportEmail = supportEmail
+        if (motto !== undefined) updatePayload.motto = motto
+        if (caConfig !== undefined) {
+            if (caConfig.caCount !== undefined) updatePayload['caConfig.caCount'] = caConfig.caCount
+            if (caConfig.caMaxScores !== undefined) updatePayload['caConfig.caMaxScores'] = caConfig.caMaxScores
+            if (caConfig.examMaxScore !== undefined) updatePayload['caConfig.examMaxScore'] = caConfig.examMaxScore
+        }
+        const school = await School.findByIdAndUpdate(req.user.schoolId, updatePayload, { new: true })
         return res.status(200).json({ success: true, data: school, message: 'School updated successfully' })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ success: false, message: 'There was an error!' })
+    }
+}
+
+const getClassPerformance = async (req, res) => {
+    try {
+        const { classId } = req.params
+        const { cycleId } = req.query
+        const schoolId = req.user.schoolId
+
+        const klass = await Class.findOne({ _id: classId, schoolId })
+        if (!klass) {
+            return res.status(404).json({ success: false, message: 'Class not found' })
+        }
+
+        const students = await Student.find({ schoolId, currentClassId: classId })
+            .sort({ lastName: 1 })
+            .populate('currentClassId', 'name arm')
+
+        const scoreFilter = { schoolId, classsId: classId }
+        if (cycleId) scoreFilter.cycleId = cycleId
+
+        const scores = await Score.find(scoreFilter)
+            .populate('subjectId', 'name code')
+            .populate('cycleId', 'session term')
+
+        const studentScoreMap = new Map()
+        scores.forEach((score) => {
+            const sid = String(score.studentId)
+            if (!studentScoreMap.has(sid)) {
+                studentScoreMap.set(sid, [])
+            }
+            studentScoreMap.get(sid).push(score)
+        })
+
+        const school = await School.findById(schoolId).select('gradingScale')
+
+        const studentsWithPerformance = students.map((student) => {
+            const sid = String(student._id)
+            const studentScores = studentScoreMap.get(sid) || []
+
+            let overallAverage = null
+            let overallGrade = null
+            let overallRemark = null
+
+            if (studentScores.length > 0) {
+                const totalSum = studentScores.reduce((sum, s) => sum + (s.total || 0), 0)
+                overallAverage = Math.round(totalSum / studentScores.length)
+
+                if (school?.gradingScale && school.gradingScale.length > 0) {
+                    const match = school.gradingScale.find(
+                        (g) => overallAverage >= g.minScore && overallAverage <= g.maxScore
+                    )
+                    if (match) {
+                        overallGrade = match.grade
+                        overallRemark = match.remark
+                    }
+                }
+            }
+
+            return {
+                ...student.toObject(),
+                overallAverage,
+                overallGrade,
+                overallRemark,
+                subjectsRecorded: studentScores.length,
+            }
+        })
+
+        return res.status(200).json({
+            success: true,
+            data: studentsWithPerformance,
+            message: 'Class performance fetched successfully',
+        })
     } catch (error) {
         console.log(error)
         res.status(500).json({ success: false, message: 'There was an error!' })
@@ -737,4 +997,6 @@ module.exports = {
     deleteResult,
     getMissingResults,
     getDashboardStats,
+    promoteStudents,
+    getClassPerformance,
 }
