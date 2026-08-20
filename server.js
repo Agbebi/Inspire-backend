@@ -35,7 +35,7 @@ mongoose
 
 //CORS Configuration
 
-const localHost = "https://inspirerms.netlify.app/";
+const localHost = "https://inspirerms.netlify.app";
 
 // const localHost = "http://localhost:5173";
 
