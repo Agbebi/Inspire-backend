@@ -228,6 +228,106 @@ const scoreSchema = new mongoose.Schema({
 })
 
 
+const parentSchema = new mongoose.Schema({
+    schoolId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'School'
+    },
+    name: {
+        type: String,
+        required: true
+    },
+    email: {
+        type: String,
+        required: true
+    },
+    phone: String,
+    password: {
+        type: String,
+        required: true
+    },
+    students: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Student'
+    }],
+    createdAt: {
+        type: Date,
+        default: Date.now
+    }
+})
+
+parentSchema.index({ schoolId: 1, email: 1 }, { unique: true })
+
+
+const notificationSchema = new mongoose.Schema({
+    schoolId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'School'
+    },
+    recipient: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Parent'
+    },
+    studentId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Student'
+    },
+    cycleId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'AcademicCycle'
+    },
+    type: {
+        type: String,
+        enum: ['result_published', 'message', 'at_risk', 'system'],
+        default: 'system'
+    },
+    title: String,
+    message: String,
+    read: {
+        type: Boolean,
+        default: false
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    }
+})
+
+
+const messageSchema = new mongoose.Schema({
+    schoolId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'School'
+    },
+    studentId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Student'
+    },
+    senderType: {
+        type: String,
+        enum: ['parent', 'school']
+    },
+    senderId: {
+        type: mongoose.Schema.Types.ObjectId
+    },
+    receiverType: {
+        type: String,
+        enum: ['parent', 'school']
+    },
+    receiverId: {
+        type: mongoose.Schema.Types.ObjectId
+    },
+    body: String,
+    read: {
+        type: Boolean,
+        default: false
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    }
+})
+
 
 const School = mongoose.model('School', schoolSchema)
 const User = mongoose.model('User', userSchema)
@@ -236,5 +336,8 @@ const Class = mongoose.model('Class', classSchema)
 const Student = mongoose.model('Student', studentSchema)
 const Subject = mongoose.model('Subject', subjectSchema)
 const Score = mongoose.model('Score', scoreSchema)
+const Parent = mongoose.model('Parent', parentSchema)
+const Notification = mongoose.model('Notification', notificationSchema)
+const Message = mongoose.model('Message', messageSchema)
 
-module.exports = { School, User, AcademicCycle, Class, Student, Subject, Score }
+module.exports = { School, User, AcademicCycle, Class, Student, Subject, Score, Parent, Notification, Message }

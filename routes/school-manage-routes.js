@@ -34,6 +34,15 @@ const {
     getDashboardStats,
     promoteStudents,
     getClassPerformance,
+    getParents,
+    getNotifications,
+    markNotificationRead,
+    deleteNotification,
+    createNotification,
+    getSchoolMessages,
+    markMessageRead,
+    markAllMessagesRead,
+    sendSchoolMessage,
 } = require('../controllers/school/manage')
 const {
     getCyclesSummary,
@@ -69,6 +78,17 @@ router.delete('/teachers/me/results/:id', deleteResult)
 
 router.get('/results/missing', getMissingResults)
 router.get('/dashboard/stats', getDashboardStats)
+
+router.get('/parents', getParents)
+router.get('/notifications', getNotifications)
+router.put('/notifications/:id/read', markNotificationRead)
+router.delete('/notifications/:id', deleteNotification)
+router.post('/notifications', createNotification)
+
+router.get('/messages', getSchoolMessages)
+router.put('/messages/:id/read', markMessageRead)
+router.put('/messages/read-all', markAllMessagesRead)
+router.post('/messages', sendSchoolMessage)
 
 router.get('/analytics/cycles', getCyclesSummary)
 router.get('/analytics/broadsheet', getClassBroadsheet)

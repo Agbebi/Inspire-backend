@@ -1,5 +1,6 @@
 const bcrypt = require('bcryptjs')
-const { School, User, AcademicCycle, Class, Student, Subject, Score } = require('../../models')
+const { School, User, AcademicCycle, Class, Student, Subject, Score, Parent, Notification, Message } = require('../../models')
+const { emitToParent, emitToSchool } = require('../../socket')
 
 const getSubjects = async (req, res) => {
     try {
@@ -966,6 +967,214 @@ const getClassPerformance = async (req, res) => {
     }
 }
 
+const getSchoolMessages = async (req, res) => {
+    try {
+        const messages = await Message.find({
+            schoolId: req.user.schoolId,
+            $or: [
+                { receiverType: 'school' },
+                { senderType: 'school' }
+            ]
+        })
+        .sort({ createdAt: 1 })
+        .populate('senderId', 'name email')
+        .populate('receiverId', 'name email')
+        .populate('studentId', 'firstName lastName admissionNumber')
+        return res.status(200).json({ success: true, data: messages, message: 'Messages fetched successfully' })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ success: false, message: 'There was an error!' })
+    }
+}
+
+const markMessageRead = async (req, res) => {
+    try {
+        const { id } = req.params
+        const message = await Message.findOneAndUpdate(
+            { _id: id, schoolId: req.user.schoolId, receiverType: 'school' },
+            { read: true },
+            { new: true }
+        )
+        if (!message) {
+            return res.status(404).json({ success: false, message: 'Message not found' })
+        }
+        return res.status(200).json({ success: true, data: message, message: 'Message marked as read' })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ success: false, message: 'There was an error!' })
+    }
+}
+
+const markAllMessagesRead = async (req, res) => {
+    try {
+        await Message.updateMany(
+            { schoolId: req.user.schoolId, receiverType: 'school', read: false },
+            { read: true }
+        )
+        return res.status(200).json({ success: true, message: 'All messages marked as read' })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ success: false, message: 'There was an error!' })
+    }
+}
+
+const sendSchoolMessage = async (req, res) => {
+    try {
+        const { body, parentId, studentId } = req.body
+        if (!body || !body.trim()) {
+            return res.status(400).json({ success: false, message: 'Message body is required' })
+        }
+        if (!parentId) {
+            return res.status(400).json({ success: false, message: 'Parent is required' })
+        }
+        const parent = await Parent.findOne({ _id: parentId, schoolId: req.user.schoolId })
+        if (!parent) {
+            return res.status(404).json({ success: false, message: 'Parent not found' })
+        }
+        const message = await Message.create({
+            schoolId: req.user.schoolId,
+            studentId: studentId || null,
+            senderType: 'school',
+            senderId: req.user._id,
+            receiverType: 'parent',
+            receiverId: parentId,
+            body: body.trim(),
+            read: false
+        })
+        const io = req.app.get('io')
+        if (io) {
+            emitToParent(io, parentId, 'message:new', message)
+        }
+        return res.status(201).json({ success: true, data: message, message: 'Message sent successfully' })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ success: false, message: 'There was an error!' })
+    }
+}
+
+const getParents = async (req, res) => {
+    try {
+        const parents = await Parent.find({ schoolId: req.user.schoolId })
+            .sort({ name: 1 })
+            .select('_id name email phone students')
+            .populate('students', 'firstName lastName admissionNumber')
+        return res.status(200).json({ success: true, data: parents, message: 'Parents fetched successfully' })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ success: false, message: 'There was an error!' })
+    }
+}
+
+const getNotifications = async (req, res) => {
+    try {
+        const notifications = await Notification.find({ schoolId: req.user.schoolId })
+            .sort({ createdAt: -1 })
+            .populate('recipient', 'name email')
+            .populate('studentId', 'firstName lastName admissionNumber')
+            .limit(100)
+        return res.status(200).json({ success: true, data: notifications, message: 'Notifications fetched successfully' })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ success: false, message: 'There was an error!' })
+    }
+}
+
+const markNotificationRead = async (req, res) => {
+    try {
+        const { id } = req.params
+        const notification = await Notification.findOneAndUpdate(
+            { _id: id, schoolId: req.user.schoolId },
+            { read: true },
+            { new: true }
+        )
+        if (!notification) {
+            return res.status(404).json({ success: false, message: 'Notification not found' })
+        }
+        return res.status(200).json({ success: true, data: notification, message: 'Notification marked as read' })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ success: false, message: 'There was an error!' })
+    }
+}
+
+const deleteNotification = async (req, res) => {
+    try {
+        const { id } = req.params
+        const notification = await Notification.findOneAndDelete({ _id: id, schoolId: req.user.schoolId })
+        if (!notification) {
+            return res.status(404).json({ success: false, message: 'Notification not found' })
+        }
+        return res.status(200).json({ success: true, message: 'Notification deleted successfully' })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ success: false, message: 'There was an error!' })
+    }
+}
+
+const createNotification = async (req, res) => {
+    try {
+        const { title, message, target, parentId, studentId } = req.body
+        const schoolId = req.user.schoolId
+
+        if (!title || !message || !target) {
+            return res.status(400).json({ success: false, message: 'Title, message and target are required' })
+        }
+
+        const io = req.app.get('io')
+        let created = []
+
+        if (target === 'all') {
+            const parents = await Parent.find({ schoolId }).select('_id')
+            const docs = parents.map((p) => ({
+                schoolId,
+                recipient: p._id,
+                studentId: studentId || null,
+                type: 'system',
+                title,
+                message,
+                read: false,
+            }))
+            created = await Notification.insertMany(docs)
+            if (io) {
+                for (const p of parents) {
+                    emitToParent(io, p._id, 'notification:new', created.find((c) => String(c.recipient) === String(p._id)))
+                }
+                emitToSchool(io, schoolId, 'notification:new', created[0])
+            }
+        } else if (target === 'specific') {
+            if (!parentId) {
+                return res.status(400).json({ success: false, message: 'Parent is required for specific target' })
+            }
+            const parent = await Parent.findOne({ _id: parentId, schoolId })
+            if (!parent) {
+                return res.status(404).json({ success: false, message: 'Parent not found' })
+            }
+            const doc = {
+                schoolId,
+                recipient: parentId,
+                studentId: studentId || null,
+                type: 'system',
+                title,
+                message,
+                read: false,
+            }
+            const notif = await Notification.create(doc)
+            created = [notif]
+            if (io) {
+                emitToParent(io, parentId, 'notification:new', notif)
+                emitToSchool(io, schoolId, 'notification:new', notif)
+            }
+        } else {
+            return res.status(400).json({ success: false, message: 'Invalid target' })
+        }
+
+        return res.status(201).json({ success: true, data: created, message: 'Notification(s) sent successfully' })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ success: false, message: 'There was an error!' })
+    }
+}
+
 module.exports = {
     getSubjects,
     addSubject,
@@ -999,4 +1208,13 @@ module.exports = {
     getDashboardStats,
     promoteStudents,
     getClassPerformance,
+    getParents,
+    getNotifications,
+    markNotificationRead,
+    deleteNotification,
+    createNotification,
+    getSchoolMessages,
+    markMessageRead,
+    markAllMessagesRead,
+    sendSchoolMessage,
 }

@@ -1,4 +1,5 @@
 const { AcademicCycle, Score, School } = require('../../models')
+const { notifyResultPublished } = require('../parent')
 
 const TERM_ORDER = ['First Term', 'Second Term', 'Third Term']
 
@@ -141,6 +142,13 @@ const publishCycle = async (req, res) => {
             { schoolId: req.user.schoolId, cycleId: cycle._id },
             { isLocked: cycle.isPublished }
         )
+
+        if (cycle.isPublished) {
+            const io = req.app.get('io')
+            if (io) {
+                await notifyResultPublished(io, req.user.schoolId, cycle)
+            }
+        }
 
         return res.status(200).json({
             success: true,
