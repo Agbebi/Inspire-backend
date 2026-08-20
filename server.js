@@ -26,7 +26,7 @@ const app = express();
 
 const mongoURI =
   process.env.MONGO_URI ||
-  "mongodb+srv://agbebitimothy8_db_user:Tims2000@cluster0.duchdbl.mongodb.net/?retryWrites=true&w=majority";
+  "mongodb+srv://@cluster0.duchdbl.mongodb.net/?retryWrites=true&w=majority";
 
 mongoose
   .connect(mongoURI)
