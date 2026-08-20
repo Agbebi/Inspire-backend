@@ -1,5 +1,6 @@
 const express = require("express");
 const http = require("http");
+const path = require("path");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
@@ -62,6 +63,13 @@ app.use("/api/school", schoolRoutes);
 app.use("/api/school/manage", schoolManageRoutes);
 app.use("/api/school/manage", schoolCycleRoutes);
 app.use("/api", parentRoutes);
+
+const frontendDist = path.join(__dirname, "../Inspire-frontend/dist");
+app.use(express.static(frontendDist));
+app.get(/^\/(?!api).*/, (req, res) => {
+  const indexFile = path.join(frontendDist, "index.html");
+  res.sendFile(indexFile);
+});
 
 const server = http.createServer(app);
 const io = new Server(server, {
